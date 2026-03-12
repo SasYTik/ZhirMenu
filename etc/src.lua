@@ -1,10 +1,5 @@
--- PlayerStatsGUI.lua  —  Windows 10 Style + Tabs
--- Вставь в StarterPlayerScripts (LocalScript) или выполни через executor
--- RightCtrl — показать/скрыть GUI  |  ] — Unlock Camera
+--  Multi-inject guard
 
--- ═══════════════════════════════════════
---  Multi-inject защита
--- ═══════════════════════════════════════
 do
 	local env = (type(getgenv) == "function" and getgenv()) or _G
 	if env._StatsGUI_Instance then
@@ -29,18 +24,18 @@ local playerGui = player:WaitForChild("PlayerGui")
 local currentPlaceId = game.PlaceId
 local universeId = game.GameId
 
--- ═══════════════════════════════════════
+
 --  Connection tracker (Bug #1 fix)
--- ═══════════════════════════════════════
+
 local _allConns = {}
 local function trackConn(conn)
 	table.insert(_allConns, conn)
 	return conn
 end
 
--- ═══════════════════════════════════════
---  Оригинальные значения игры (до GUI)
--- ═══════════════════════════════════════
+
+--  Original game values (captured before GUI loads)
+
 
 local _origValues = (function()
 	local ch = player.Character
@@ -56,9 +51,9 @@ local _origValues = (function()
 	}
 end)()
 
--- ═══════════════════════════════════════
---  Глобальное состояние
--- ═══════════════════════════════════════
+
+--  Global state
+
 
 local State = {
 	walkSpeed = 16,
@@ -95,12 +90,12 @@ local Keybinds = {
 	fly         = Enum.KeyCode.G,
 }
 
--- Bug #4 fix: флаг "сейчас слушаем новый бинд"
+-- Bug #4 fix: flag set while waiting for a new keybind input
 local isRebinding = false
 
--- ═══════════════════════════════════════
---  Сохранение / загрузка настроек
--- ═══════════════════════════════════════
+
+--  Settings save / load
+
 
 local _settingsPending = false
 local _settingsSuppressed = false -- Bug #3 fix
@@ -157,9 +152,9 @@ task.spawn(function()
 	if Workspace.CurrentCamera then Workspace.CurrentCamera.FieldOfView = State.fov end
 end)
 
--- ═══════════════════════════════════════
---  Win10 Цвета
--- ═══════════════════════════════════════
+
+--  Win10 Colours
+
 
 local C = {
 	titleBar       = Color3.fromRGB(18, 18, 28),
@@ -186,9 +181,9 @@ local C = {
 	surfaceAlt     = Color3.fromRGB(28, 28, 42),
 }
 
--- ═══════════════════════════════════════
---  Утилиты
--- ═══════════════════════════════════════
+
+--  Utilities
+
 
 local function create(class, props)
 	local inst = Instance.new(class)
@@ -219,9 +214,9 @@ local function setClipboard(text)
 	return ok2
 end
 
--- ═══════════════════════════════════════
+
 --  ScreenGui
--- ═══════════════════════════════════════
+
 
 local screenGui = create("ScreenGui", {
 	Name = "StatsGUI",
@@ -236,9 +231,9 @@ pcall(function()
 	screenGui.Parent = cg
 end)
 
--- ═══════════════════════════════════════
---  Toast уведомления
--- ═══════════════════════════════════════
+
+--  Toast notifications
+
 
 local toastContainer = create("Frame", {
 	Name = "ToastContainer",
@@ -312,9 +307,9 @@ local function showToast(text, duration, color)
 	end)
 end
 
--- ═══════════════════════════════════════
---  Окно
--- ═══════════════════════════════════════
+
+--  Window
+
 
 local WIN_W = 360
 local WIN_H = 650
@@ -395,9 +390,9 @@ trackConn(screenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 	setWindowOffsets(window.Position.X.Offset, window.Position.Y.Offset)
 end))
 
--- ═══════════════════════════════════════
+
 --  Title Bar
--- ═══════════════════════════════════════
+
 
 local TITLE_H_PX = 30
 
@@ -489,9 +484,9 @@ create("UIGradient", {
 	Parent = accentLine,
 })
 
--- ═══════════════════════════════════════
+
 --  Tab Bar
--- ═══════════════════════════════════════
+
 
 local TAB_H_PX = 28
 local TAB_TOP_PX = TITLE_H_PX  -- right below title
@@ -554,9 +549,9 @@ create("Frame", {
 	Parent = tabBar,
 })
 
--- ═══════════════════════════════════════
+
 --  Pages — content area below tab bar
--- ═══════════════════════════════════════
+
 
 local PAGE_TOP_PX = TAB_TOP_PX + TAB_H_PX  -- 58 px from top
 local PAGE_PAD = 0.024             -- horizontal padding as Scale
@@ -602,9 +597,9 @@ local page3 = makePage("PageTeleport",  false, false)
 local page4 = makePage("PagePlayers",   true,  false)
 local page5 = makePage("PageSettings",  true,  false)
 
--- ═══════════════════════════════════════
+
 --  Builders
--- ═══════════════════════════════════════
+
 
 local function createSectionHeader(parent, text, order)
 	local hdr = create("TextLabel", {
@@ -864,9 +859,9 @@ local function createToggle(parent, label, order, callback)
 	}
 end
 
--- ═══════════════════════════════════════════════════════
+════════════════
 --                  PAGE 1: PLAYER
--- ═══════════════════════════════════════════════════════
+════════════════
 
 createSectionHeader(page1, "Movement", 0)
 
@@ -1183,14 +1178,14 @@ createToggle(page1, "ESP (Highlight Players)", 17, function(on)
 	State.esp = on; if on then enableESP() else disableESP() end
 end)
 
--- FE Invisible — метод телепорта под карту
--- Каждый Heartbeat до рендера: перемещает HumanoidRootPart на -200000 в Y
--- (сервер и другие игроки видят тебя там = ты невидим), потом до следующего
--- RenderStepped возвращает на место — ты сам видишь себя нормально.
--- CameraOffset корректируется чтобы камера не прыгала.
+-- FE Invisible — teleport-under-map method
+-- Every Heartbeat before render: moves HumanoidRootPart to Y=-200000
+-- (server and other players see you there = you are invisible), then before
+-- the next RenderStepped it moves back — you see yourself normally.
+-- CameraOffset is adjusted so the camera does not jump.
 local invisConn = nil
 
--- Применяем/снимаем визуальный полупрозрачный эффект для локального игрока
+-- Apply/remove semi-transparent visual effect for the local player
 local function setInvisVisual(on)
 	local ch = player.Character; if not ch then return end
 	for _, p in ipairs(ch:GetDescendants()) do
@@ -1427,9 +1422,9 @@ createSlider(page1, "Hitbox Size", 2, 50, State.hitboxSize, 23, function(v)
 	saveSettings()
 end, "hitboxSize")
 
--- ═══════════════════════════════════════════════════════
+════════════════
 --                 PAGE 2: SUBPLACES
--- ═══════════════════════════════════════════════════════
+════════════════
 
 local statusLabel = create("TextLabel", {
 	Text = "Loading places...",
@@ -1734,9 +1729,9 @@ task.spawn(function()
 	end
 end)
 
--- ═══════════════════════════════════════════════════════
+════════════════
 --                 PAGE 3: TELEPORT
--- ═══════════════════════════════════════════════════════
+════════════════
 
 local RSS_FOLDER  = "RSS"
 local WP_FILE     = RSS_FOLDER .. "/wp.json"
@@ -2291,9 +2286,9 @@ end)
 
 refreshWaypoints()
 
--- ═══════════════════════════════════════════════════════
+════════════════
 --                 PAGE 4: PLAYERS
--- ═══════════════════════════════════════════════════════
+════════════════
 
 spectateTarget = nil
 local spectateConn   = nil
@@ -2645,9 +2640,9 @@ local plrRemConn = Players.PlayerRemoving:Connect(function(p)
 	task.wait(0.2); refreshPlayerList()
 end)
 
--- ═══════════════════════════════════════════════════════
+════════════════
 --                 PAGE 5: SETTINGS
--- ═══════════════════════════════════════════════════════
+════════════════
 
 createSectionHeader(page5, "Configuration", 0)
 
@@ -3139,9 +3134,9 @@ create("TextLabel", {
 	LayoutOrder = 34, Parent = page5,
 })
 
--- ═══════════════════════════════════════
+
 --  Respawn
--- ═══════════════════════════════════════
+
 
 player.CharacterAdded:Connect(function(char)
 	local hum = char:WaitForChild("Humanoid", 10)
@@ -3163,16 +3158,16 @@ player.CharacterAdded:Connect(function(char)
 		task.wait(0.3)
 		for _, p in ipairs(Players:GetPlayers()) do addESP(p) end
 	end
-	-- При респавне деактивируем инвиз (новый персонаж, соединение переназначится при следующем включении)
+	-- On respawn, deactivate invisible (new character; connection will be re-established on next toggle)
 	if State.invisible then
 		State.invisible = false
 		if invisConn then invisConn:Disconnect(); invisConn = nil end
 	end
 end)
 
--- ═══════════════════════════════════════
+
 --  Drag
--- ═══════════════════════════════════════
+
 
 do
 	local da, ds, sp
@@ -3196,9 +3191,9 @@ do
 	end))
 end
 
--- ═══════════════════════════════════════
+
 --  Minimize / Close
--- ═══════════════════════════════════════
+
 
 local mini = false
 local miniSz = UDim2.fromOffset(WIN_W, TITLE_H_PX)
@@ -3293,9 +3288,9 @@ do
 	}
 end
 
--- ═══════════════════════════════════════
+
 --  Keybinds  (Bug #1 + Bug #4)
--- ═══════════════════════════════════════
+
 
 trackConn(UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
@@ -3338,12 +3333,12 @@ trackConn(UserInputService.InputBegan:Connect(function(input, gpe)
 				RunService.RenderStepped:Wait()
 				if hrp and hrp.Parent then
 					hrp.CFrame = savedCFrame
-					hum.CameraOffset = savedCamOffset
-				end
-			end)
-		else
-			if invisConn then invisConn:Disconnect(); invisConn = nil end
-		end
+hum.CameraOffset = savedCamOffset
+					end
+				end)
+			else
+				if invisConn then invisConn:Disconnect(); invisConn = nil end
+			end
 	elseif input.KeyCode == Keybinds.fly then
 		State.fly = not State.fly
 		flyToggle.setState(State.fly)
