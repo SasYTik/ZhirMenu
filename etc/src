@@ -79,7 +79,6 @@ local State = {
 	guiScale = 100,
 	guiOpacity = 0,
 	invisYOffset = 200000,
-	autoexecPath = "",
 }
 
 local Keybinds = {
@@ -109,14 +108,9 @@ local function saveSettings()
 		pcall(function()
 			if not isfolder("RSS") then makefolder("RSS") end
 			local numKeys = {"walkSpeed","jumpPower","gravity","fov","camDistance","flySpeed","sliderStep","hitboxSize","guiScale","guiOpacity","invisYOffset"}
-			local strKeys = {"autoexecPath"}
 			local parts = {}
 			for _, k in ipairs(numKeys) do
 				table.insert(parts, string.format('    "%s": %s', k, tostring(State[k])))
-			end
-			for _, k in ipairs(strKeys) do
-				local v = State[k] or ""
-				table.insert(parts, string.format('    "%s": "%s"', k, v:gsub('"', '\\"')))
 			end
 			writefile("RSS/settings.json", "{\n" .. table.concat(parts, ",\n") .. "\n}")
 		end)
@@ -859,9 +853,9 @@ local function createToggle(parent, label, order, callback)
 	}
 end
 
-════════════════
+
 --                  PAGE 1: PLAYER
-════════════════
+
 
 createSectionHeader(page1, "Movement", 0)
 
@@ -1422,9 +1416,9 @@ createSlider(page1, "Hitbox Size", 2, 50, State.hitboxSize, 23, function(v)
 	saveSettings()
 end, "hitboxSize")
 
-════════════════
+
 --                 PAGE 2: SUBPLACES
-════════════════
+
 
 local statusLabel = create("TextLabel", {
 	Text = "Loading places...",
@@ -1729,9 +1723,9 @@ task.spawn(function()
 	end
 end)
 
-════════════════
+
 --                 PAGE 3: TELEPORT
-════════════════
+
 
 local RSS_FOLDER  = "RSS"
 local WP_FILE     = RSS_FOLDER .. "/wp.json"
@@ -2286,9 +2280,9 @@ end)
 
 refreshWaypoints()
 
-════════════════
+
 --                 PAGE 4: PLAYERS
-════════════════
+
 
 spectateTarget = nil
 local spectateConn   = nil
@@ -2640,9 +2634,9 @@ local plrRemConn = Players.PlayerRemoving:Connect(function(p)
 	task.wait(0.2); refreshPlayerList()
 end)
 
-════════════════
+
 --                 PAGE 5: SETTINGS
-════════════════
+
 
 createSectionHeader(page5, "Configuration", 0)
 
@@ -2913,227 +2907,6 @@ create("TextLabel", {
 	TextColor3 = C.textDim, Font = Enum.Font.SourceSans, TextSize = 14,
 	TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = 23, Parent = page5,
 })
-
-createSectionHeader(page5, "Autoexec", 30)
-
--- Default relative paths to try (relative to executor workspace)
-local AE_REL_PATHS = { "../autoexec/ZhirMenu.lua", "autoexec/ZhirMenu.lua" }
--- Possible source locations
-local SRC_PATHS = {
-	"../scripts/charter.lua",
-	"../scripts/ZhirMenu.lua",
-	"../scripts/zhirmenu.lua",
-	"scripts/charter.lua",
-	"scripts/ZhirMenu.lua",
-	"RSS/ZhirMenu_src.lua",
-}
-
--- Build effective list of all autoexec paths to try, including custom path
-local function getAePaths()
-	local paths = {}
-	-- Custom path first (highest priority)
-	local custom = State.autoexecPath
-	if custom and custom ~= "" then
-		-- Normalize: ensure trailing separator and append filename
-		local sep = custom:find("/") and "/" or "\\"
-		if not custom:match("[/\\]$") then custom = custom .. sep end
-		table.insert(paths, custom .. "ZhirMenu.lua")
-	end
-	-- Then default relative paths
-	for _, p in ipairs(AE_REL_PATHS) do
-		table.insert(paths, p)
-	end
-	return paths
-end
-
-local function isAutoexecInstalled()
-	for _, p in ipairs(getAePaths()) do
-		local ok, r = pcall(isfile, p)
-		if ok and r then return true, p end
-	end
-	return false
-end
-
-local installed, installedAt = isAutoexecInstalled()
-
-local autoexecStatusLabel = create("TextLabel", {
-	Text = installed and ("Autoexec: installed  (" .. (installedAt or "") .. ")") or "Autoexec: not installed",
-	Size = UDim2.new(1, 0, 0, 46),
-	BackgroundTransparency = 1,
-	TextColor3 = installed and Color3.fromRGB(80, 200, 80) or C.textDim,
-	Font = Enum.Font.SourceSans,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextWrapped = true,
-	LayoutOrder = 31,
-	Parent = page5,
-})
-
--- Custom path input
-create("TextLabel", {
-	Text = "Custom autoexec folder (full path, leave empty = auto):",
-	Size = UDim2.new(1, 0, 0, 18),
-	BackgroundTransparency = 1,
-	TextColor3 = C.textDim,
-	Font = Enum.Font.SourceSans,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	LayoutOrder = 311,
-	Parent = page5,
-})
-
-local customPathBox = create("TextBox", {
-	Text = State.autoexecPath or "",
-	PlaceholderText = "e.g. C:\\Users\\you\\AppData\\Local\\Potassium\\autoexec",
-	Size = UDim2.new(1, 0, 0, 30),
-	BackgroundColor3 = C.surface,
-	TextColor3 = C.textPrimary,
-	PlaceholderColor3 = C.textDim,
-	Font = Enum.Font.SourceSans,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	ClearTextOnFocus = false,
-	BorderSizePixel = 0,
-	LayoutOrder = 312,
-	Parent = page5,
-})
-addCorner(customPathBox, 4)
-addStroke(customPathBox, C.border, 1, 0.4)
--- Pad text a little
-local cpPad = create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), Parent = customPathBox })
-
-customPathBox.FocusLost:Connect(function()
-	local txt = customPathBox.Text:match("^%s*(.-)%s*$") or ""
-	State.autoexecPath = txt
-	saveSettings()
-	showToast(txt == "" and "Custom path cleared" or "Custom path saved", 2)
-end)
-
-local installAutoexecBtn = create("TextButton", {
-	Text = installed and "Reinstall Autoexec" or "Install Autoexec",
-	Size = UDim2.new(1, 0, 0, 34),
-	BackgroundColor3 = C.accent,
-	TextColor3 = C.textPrimary,
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 14,
-	BorderSizePixel = 0,
-	AutoButtonColor = false,
-	LayoutOrder = 32,
-	Parent = page5,
-})
-addCorner(installAutoexecBtn, 6)
-installAutoexecBtn.MouseEnter:Connect(function() installAutoexecBtn.BackgroundColor3 = C.accentHover end)
-installAutoexecBtn.MouseLeave:Connect(function() installAutoexecBtn.BackgroundColor3 = C.accent end)
-installAutoexecBtn.MouseButton1Click:Connect(function()
-	installAutoexecBtn.Text = "Installing..."
-	task.spawn(function()
-		-- 1. Find script source
-		local scriptSrc, foundPath = nil, nil
-		for _, p in ipairs(SRC_PATHS) do
-			local ok, content = pcall(readfile, p)
-			if ok and type(content) == "string" and #content > 500 then
-				scriptSrc = content
-				foundPath = p
-				break
-			end
-		end
-
-		-- 2. Build autoexec file content
-		local fileContent
-		if scriptSrc then
-			fileContent = scriptSrc
-		else
-			fileContent = "-- ZhirMenu Autoexec Loader\n"
-				.. "-- Script source not found automatically.\n"
-				.. "-- Copy your full script into RSS/ZhirMenu_src.lua\n"
-				.. "pcall(function()\n"
-				.. "\tif isfile and readfile and isfile('RSS/ZhirMenu_src.lua') then\n"
-				.. "\t\tlocal s = readfile('RSS/ZhirMenu_src.lua')\n"
-				.. "\t\tif s and #s > 100 then loadstring(s)() end\n"
-				.. "\tend\n"
-				.. "end)\n"
-		end
-
-		-- 3. Write to all paths (custom + default relative)
-		local allPaths = getAePaths()
-		local writtenTo = {}
-		for _, p in ipairs(allPaths) do
-			-- Try to create parent folder
-			local folder = p:match("^(.+)[/\\][^/\\]+$")
-			if folder then pcall(function()
-				local ok2, ex = pcall(isfolder, folder)
-				if ok2 and not ex then makefolder(folder) end
-			end) end
-			local wok = pcall(writefile, p, fileContent)
-			if wok then table.insert(writtenTo, p) end
-		end
-
-		-- 4. Persist source to RSS
-		if scriptSrc then
-			pcall(function()
-				if not isfolder("RSS") then makefolder("RSS") end
-				writefile("RSS/ZhirMenu_src.lua", scriptSrc)
-			end)
-		end
-
-		-- 5. Update UI
-		if #writtenTo > 0 then
-			local paths = table.concat(writtenTo, "\n")
-			autoexecStatusLabel.Text = "Autoexec: installed\n" .. paths
-				.. (scriptSrc and ("\nSource: " .. foundPath) or "\n(loader only — no source found)")
-			autoexecStatusLabel.TextColor3 = scriptSrc and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(220, 180, 50)
-			installAutoexecBtn.Text = "Reinstall Autoexec"
-			showToast(
-				scriptSrc and ("Autoexec installed to " .. #writtenTo .. " path(s)!") or "Autoexec installed (loader only)",
-				scriptSrc and 3 or 5,
-				scriptSrc and C.accent or Color3.fromRGB(220, 180, 50)
-			)
-		else
-			autoexecStatusLabel.Text = "Failed to write any autoexec file.\nSet the custom path to your executor's autoexec folder."
-			autoexecStatusLabel.TextColor3 = C.closeHover
-			installAutoexecBtn.Text = "Install Autoexec"
-			showToast("Failed — try setting the custom path above", 4, C.closeHover)
-		end
-	end)
-end)
-
-local removeAutoexecBtn = create("TextButton", {
-	Text = "Remove Autoexec",
-	Size = UDim2.new(1, 0, 0, 34),
-	BackgroundColor3 = C.surface,
-	TextColor3 = C.closeHover,
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 14,
-	BorderSizePixel = 0,
-	AutoButtonColor = false,
-	LayoutOrder = 33,
-	Parent = page5,
-})
-addCorner(removeAutoexecBtn, 6)
-addStroke(removeAutoexecBtn, C.border, 1, 0.4)
-removeAutoexecBtn.MouseEnter:Connect(function() removeAutoexecBtn.BackgroundColor3 = C.closeHover; removeAutoexecBtn.TextColor3 = C.textPrimary end)
-removeAutoexecBtn.MouseLeave:Connect(function() removeAutoexecBtn.BackgroundColor3 = C.surface; removeAutoexecBtn.TextColor3 = C.closeHover end)
-removeAutoexecBtn.MouseButton1Click:Connect(function()
-	for _, p in ipairs(getAePaths()) do
-		pcall(function()
-			local ok, r = pcall(isfile, p)
-			if ok and r then delfile(p) end
-		end)
-	end
-	autoexecStatusLabel.Text = "Autoexec: not installed"
-	autoexecStatusLabel.TextColor3 = C.textDim
-	installAutoexecBtn.Text = "Install Autoexec"
-	showToast("Autoexec removed")
-end)
-
-create("TextLabel", {
-	Text = "Potassium: C:\\Users\\<you>\\AppData\\Local\\Potassium\\autoexec",
-	Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1,
-	TextColor3 = C.textDim, Font = Enum.Font.SourceSans, TextSize = 12,
-	TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
-	LayoutOrder = 34, Parent = page5,
-})
-
 
 --  Respawn
 
