@@ -10,6 +10,26 @@ do
 	env._StatsGUI_Instance = { active = true }
 end
 
+-- ── Teleport Persistence ──────────────────────────────────────────────────
+-- После телепорта / смены плейса скрипт автоматически запустится снова.
+pcall(function()
+	if type(queue_on_teleport) ~= "function" then return end
+	if not isfolder("RSS") then makefolder("RSS") end
+	local savePath = "RSS/zhirmenu.lua"
+	-- Копируем файл в RSS/ при первом запуске (ищем в стандартных папках экзекутора)
+	if not isfile(savePath) then
+		for _, src in ipairs({ "zhirmenu.lua", "scripts/zhirmenu.lua", "autoexec/zhirmenu.lua" }) do
+			if isfile(src) then
+				writefile(savePath, readfile(src))
+				break
+			end
+		end
+	end
+	if isfile(savePath) then
+		queue_on_teleport(string.format('loadstring(readfile(%q))()', savePath))
+	end
+end)
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
@@ -17,6 +37,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -73,6 +94,8 @@ local State = {
 	flySpeed = 50,
 	sliderStep = 1,
 	separateFlySpeed = false,
+	autoJump = false,
+	autoJumpDelay = 1,
 	antiAfk = false,
 	hitboxExpander = false,
 	hitboxSize = 10,
@@ -107,7 +130,7 @@ local function saveSettings()
 		if _settingsSuppressed then return end
 		pcall(function()
 			if not isfolder("RSS") then makefolder("RSS") end
-			local numKeys = {"walkSpeed","jumpPower","gravity","fov","camDistance","flySpeed","sliderStep","hitboxSize","guiScale","guiOpacity","invisYOffset"}
+			local numKeys = {"walkSpeed","jumpPower","gravity","fov","camDistance","flySpeed","sliderStep","hitboxSize","guiScale","guiOpacity","invisYOffset","autoJumpDelay"}
 			local parts = {}
 			for _, k in ipairs(numKeys) do
 				table.insert(parts, string.format('    "%s": %s', k, tostring(State[k])))
@@ -595,19 +618,141 @@ local page5 = makePage("PageSettings",  true,  false)
 --  Builders
 
 
+-- Collapsible section: returns the inner content frame.
+-- All items that belong to this section should be parented to the returned frame.
+local _sectionStates = {} -- key = text, value = bool (true = expanded)
+
 local function createSectionHeader(parent, text, order)
-	local hdr = create("TextLabel", {
-		Text = "  " .. text,
-		Size = UDim2.new(1, 0, 0, 28),
+	local expanded = (_sectionStates[text] ~= false) -- default open
+
+	-- Outer wrapper: auto-sizes to header + content
+	local outer = create("Frame", {
+		Name = "Section_" .. text,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ClipsDescendants = false,
+		LayoutOrder = order,
+		Parent = parent,
+	})
+	create("UIListLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 4),
+		Parent = outer,
+	})
+
+	-- Clickable header row
+	local hdrBtn = create("TextButton", {
+		Name = "SectionHeader",
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 26),
+		BackgroundColor3 = Color3.fromRGB(28, 28, 44),
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		LayoutOrder = 0,
+		ZIndex = 2,
+		Parent = outer,
+	})
+	addCorner(hdrBtn, 5)
+	addStroke(hdrBtn, C.border, 1, 0.6)
+
+	-- Arrow indicator (simple ASCII: - for open, + for closed)
+	local arrowLabel = create("TextLabel", {
+		Text = expanded and "-" or "+",
+		Size = UDim2.new(0, 18, 1, 0),
+		Position = UDim2.new(0, 6, 0, 0),
+		BackgroundTransparency = 1,
+		TextColor3 = C.accent,
+		Font = Enum.Font.GothamBold,
+		TextSize = 16,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Parent = hdrBtn,
+	})
+	create("TextLabel", {
+		Text = text,
+		Size = UDim2.new(1, -28, 1, 0),
+		Position = UDim2.new(0, 24, 0, 0),
 		BackgroundTransparency = 1,
 		TextColor3 = C.accent,
 		Font = Enum.Font.GothamSemibold,
 		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		TextStrokeTransparency = 1,
-		LayoutOrder = order,
-		Parent = parent,
+		Parent = hdrBtn,
 	})
+
+	-- Content frame: contains all section items
+	local content = create("Frame", {
+		Name = "SectionContent",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = expanded and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		LayoutOrder = 1,
+		Parent = outer,
+	})
+	create("UIListLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 6),
+		Parent = content,
+	})
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 2),
+		Parent = content,
+	})
+
+	local animating = false
+
+	local function setExpanded(v)
+		if animating then return end
+		animating = true
+		expanded = v
+		_sectionStates[text] = v
+		arrowLabel.Text = v and "-" or "+"
+		
+		if v then
+			-- Expanding: enable AutomaticSize, wait for layout, then animate
+			content.AutomaticSize = Enum.AutomaticSize.Y
+			task.wait()
+			local targetHeight = content.AbsoluteSize.Y
+			content.AutomaticSize = Enum.AutomaticSize.None
+			content.Size = UDim2.new(1, 0, 0, 0)
+			local tween = TweenService:Create(content, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.new(1, 0, 0, targetHeight)
+			})
+			tween:Play()
+			tween.Completed:Connect(function()
+				content.AutomaticSize = Enum.AutomaticSize.Y
+				content.Size = UDim2.new(1, 0, 0, 0)
+				animating = false
+			end)
+		else
+			-- Collapsing: animate to 0 height
+			local currentHeight = content.AbsoluteSize.Y
+			content.AutomaticSize = Enum.AutomaticSize.None
+			content.Size = UDim2.new(1, 0, 0, currentHeight)
+			local tween = TweenService:Create(content, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.new(1, 0, 0, 0)
+			})
+			tween:Play()
+			tween.Completed:Connect(function()
+				animating = false
+			end)
+		end
+	end
+
+	hdrBtn.MouseEnter:Connect(function()
+		hdrBtn.BackgroundColor3 = Color3.fromRGB(36, 36, 56)
+	end)
+	hdrBtn.MouseLeave:Connect(function()
+		hdrBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 44)
+	end)
+	hdrBtn.MouseButton1Click:Connect(function()
+		setExpanded(not expanded)
+	end)
+
+	return content
 end
 
 -- Slider tracker for Bug #2: reset syncs UI
@@ -857,30 +1002,30 @@ end
 --                  PAGE 1: PLAYER
 
 
-createSectionHeader(page1, "Movement", 0)
+local secMovement = createSectionHeader(page1, "Movement", 0)
 
-createSlider(page1, "WalkSpeed", 0, 500, State.walkSpeed, 1, function(v)
+createSlider(secMovement, "WalkSpeed", 0, 500, State.walkSpeed, 1, function(v)
 	State.walkSpeed = v
 	local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if h then h.WalkSpeed = v end
 	saveSettings()
 end, "walkSpeed")
 
-createSlider(page1, "JumpPower", 0, 500, State.jumpPower, 2, function(v)
+createSlider(secMovement, "JumpPower", 0, 500, State.jumpPower, 2, function(v)
 	State.jumpPower = v
 	local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if h then h.UseJumpPower = true; h.JumpPower = v end
 	saveSettings()
 end, "jumpPower")
 
-createSlider(page1, "Gravity", 0, 500, State.gravity, 3, function(v)
+createSlider(secMovement, "Gravity", 0, 500, State.gravity, 3, function(v)
 	State.gravity = v; Workspace.Gravity = v
 	saveSettings()
 end, "gravity")
 
-createSectionHeader(page1, "Camera", 4)
+local secCamera = createSectionHeader(page1, "Camera", 4)
 
-createSlider(page1, "Field of View", 30, 120, State.fov, 5, function(v)
+createSlider(secCamera, "Field of View", 30, 120, State.fov, 5, function(v)
 	State.fov = v
 	local cam = Workspace.CurrentCamera
 	if cam then cam.FieldOfView = v end
@@ -906,7 +1051,7 @@ local function restoreCam()
 	origCamMode = nil; origMinZoom = nil; origMaxZoom = nil
 end
 
-local camToggle = createToggle(page1, "Unlock Camera  ( ] )", 6, function(on)
+local camToggle = createToggle(secCamera, "Unlock Camera  ( ] )", 6, function(on)
 	State.cameraUnlock = on
 	if on then
 		if not origCamMode then
@@ -918,20 +1063,20 @@ local camToggle = createToggle(page1, "Unlock Camera  ( ] )", 6, function(on)
 	else restoreCam() end
 end)
 
-createSlider(page1, "Zoom Distance", 2, 128, State.camDistance, 7, function(v)
+createSlider(secCamera, "Zoom Distance", 2, 128, State.camDistance, 7, function(v)
 	State.camDistance = v
 	if State.cameraUnlock then player.CameraMaxZoomDistance = v end
 	saveSettings()
 end, "camDistance")
 
-createSectionHeader(page1, "Presets", -2)
+local secPresets = createSectionHeader(page1, "Presets", -2)
 
 do
 	local presetRow = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 34),
 		BackgroundTransparency = 1,
-		LayoutOrder = -1,
-		Parent = page1,
+		LayoutOrder = 1,
+		Parent = secPresets,
 	})
 	local presets = {
 		{ name = "Default", ws = 16, jp = 50, grav = 196 },
@@ -976,7 +1121,7 @@ do
 	end
 end
 
-createSectionHeader(page1, "Toggles", 10)
+local secToggles = createSectionHeader(page1, "Toggles", 10)
 
 -- Remove Lighting
 local origLP, origEfx = nil, nil
@@ -1018,7 +1163,7 @@ local function restoreLight()
 	origLP = nil; origEfx = nil
 end
 
-createToggle(page1, "Remove Lighting", 11, function(on)
+createToggle(secToggles, "Remove Lighting", 11, function(on)
 	State.removeLighting = on
 	if on then saveLightOrig(); stripLight() else restoreLight() end
 end)
@@ -1030,7 +1175,7 @@ local function setAnchored(a)
 	for _, p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.Anchored = a end end
 end
 
-createToggle(page1, "Freeze Player", 12, function(on)
+createToggle(secToggles, "Freeze Player", 12, function(on)
 	State.freezePlayer = on
 	if on then
 		setAnchored(true)
@@ -1044,7 +1189,7 @@ end)
 
 -- Infinite Jump
 local ijConn = nil
-createToggle(page1, "Infinite Jump", 13, function(on)
+createToggle(secToggles, "Infinite Jump", 13, function(on)
 	State.infJump = on
 	if on then
 		if ijConn then ijConn:Disconnect() end
@@ -1056,9 +1201,37 @@ createToggle(page1, "Infinite Jump", 13, function(on)
 	else if ijConn then ijConn:Disconnect(); ijConn = nil end end
 end)
 
+-- Auto Jump
+local autoJumpThread = nil
+local function stopAutoJump()
+	if autoJumpThread then
+		task.cancel(autoJumpThread)
+		autoJumpThread = nil
+	end
+end
+local function startAutoJump()
+	stopAutoJump()
+	autoJumpThread = task.spawn(function()
+		while State.autoJump do
+			local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+			task.wait(math.max(0.05, State.autoJumpDelay))
+		end
+	end)
+end
+
+createToggle(secToggles, "Auto Jump", 14, function(on)
+	State.autoJump = on
+	if on then startAutoJump() else stopAutoJump() end
+end)
+createSlider(secToggles, "Auto Jump Delay (s)", 0, 10, State.autoJumpDelay, 15, function(v)
+	State.autoJumpDelay = v
+	saveSettings()
+end, "autoJumpDelay")
+
 -- Noclip
 local ncConn = nil
-createToggle(page1, "Noclip", 14, function(on)
+createToggle(secToggles, "Noclip", 16, function(on)
 	State.noclip = on
 	if on then
 		if ncConn then ncConn:Disconnect() end
@@ -1110,7 +1283,7 @@ local function stopFly()
 	if ch then local h = ch:FindFirstChildOfClass("Humanoid"); if h then h.PlatformStand = false end end
 end
 
-local flyToggle = createToggle(page1, "Fly  (G)  WASD+Space/Ctrl", 15, function(on)
+local flyToggle = createToggle(secToggles, "Fly  (G)  WASD+Space/Ctrl", 17, function(on)
 	State.fly = on
 	if on then startFly() else stopFly() end
 	showToast(on and "Fly enabled" or "Fly disabled")
@@ -1123,7 +1296,7 @@ local flySpeedWrapper = create("Frame", {
 	BorderSizePixel = 0,
 	LayoutOrder = 16,
 	Visible = false,
-	Parent = page1,
+	Parent = secToggles,
 })
 createSlider(flySpeedWrapper, "Fly Speed", 1, 500, State.flySpeed, 0, function(v)
 	State.flySpeed = v
@@ -1168,7 +1341,7 @@ local function disableESP()
 	for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
 end
 
-createToggle(page1, "ESP (Highlight Players)", 17, function(on)
+createToggle(secToggles, "ESP (Highlight Players)", 19, function(on)
 	State.esp = on; if on then enableESP() else disableESP() end
 end)
 
@@ -1189,7 +1362,7 @@ local function setInvisVisual(on)
 	end
 end
 
-local invisToggle = createToggle(page1, "Invisible  (I)", 18, function(on)
+local invisToggle = createToggle(secToggles, "Invisible  (I)", 20, function(on)
 	State.invisible = on
 	setInvisVisual(on)
 	if on then
@@ -1220,7 +1393,7 @@ local invisToggle = createToggle(page1, "Invisible  (I)", 18, function(on)
 	end
 end)
 
-createSlider(page1, "Invis Y Offset", 100, 500000, State.invisYOffset, 181, function(v)
+createSlider(secToggles, "Invis Y Offset", 100, 500000, State.invisYOffset, 181, function(v)
 	State.invisYOffset = v
 	saveSettings()
 end, "invisYOffset")
@@ -1334,15 +1507,15 @@ local function stopFreecam()
 	end
 end
 
-local freecamToggle = createToggle(page1, "FreeCam  (F)", 19, function(on)
+local freecamToggle = createToggle(secToggles, "FreeCam  (F)", 21, function(on)
 	State.freecam = on; if on then startFreecam() else stopFreecam() end
 end)
 
-createSectionHeader(page1, "Utility", 20)
+local secUtility = createSectionHeader(page1, "Utility", 22)
 
 -- Anti-AFK
 local afkConn = nil
-createToggle(page1, "Anti-AFK", 21, function(on)
+createToggle(secUtility, "Anti-AFK", 23, function(on)
 	State.antiAfk = on
 	if on then
 		local VU = game:GetService("VirtualUser")
@@ -1393,7 +1566,7 @@ local function resetHitboxes()
 	end
 end
 
-createToggle(page1, "Hitbox Expander", 22, function(on)
+createToggle(secUtility, "Hitbox Expander", 24, function(on)
 	State.hitboxExpander = on
 	if on then
 		expandHitboxes(State.hitboxSize)
@@ -1410,7 +1583,7 @@ createToggle(page1, "Hitbox Expander", 22, function(on)
 	end
 end)
 
-createSlider(page1, "Hitbox Size", 2, 50, State.hitboxSize, 23, function(v)
+createSlider(secUtility, "Hitbox Size", 2, 50, State.hitboxSize, 23, function(v)
 	State.hitboxSize = v
 	if State.hitboxExpander then expandHitboxes(v) end
 	saveSettings()
@@ -2638,7 +2811,7 @@ end)
 --                 PAGE 5: SETTINGS
 
 
-createSectionHeader(page5, "Configuration", 0)
+local secConfig = createSectionHeader(page5, "Configuration", 0)
 
 local settingsStatusLabel = create("TextLabel", {
 	Text = "",
@@ -2649,7 +2822,7 @@ local settingsStatusLabel = create("TextLabel", {
 	TextSize = 15,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	LayoutOrder = 1,
-	Parent = page5,
+	Parent = secConfig,
 })
 
 pcall(function()
@@ -2674,7 +2847,7 @@ local resetAllBtn = create("TextButton", {
 	BorderSizePixel = 0,
 	AutoButtonColor = false,
 	LayoutOrder = 2,
-	Parent = page5,
+	Parent = secConfig,
 })
 addCorner(resetAllBtn, 6)
 create("UIStroke", { Color = C.border, Thickness = 1, Transparency = 0.4, Parent = resetAllBtn })
@@ -2740,7 +2913,7 @@ local delSettingsBtn = create("TextButton", {
 	BorderSizePixel = 0,
 	AutoButtonColor = false,
 	LayoutOrder = 3,
-	Parent = page5,
+	Parent = secConfig,
 })
 addCorner(delSettingsBtn, 6)
 create("UIStroke", { Color = C.border, Thickness = 1, Transparency = 0.4, Parent = delSettingsBtn })
@@ -2769,7 +2942,7 @@ local delWpBtn2 = create("TextButton", {
 	BorderSizePixel = 0,
 	AutoButtonColor = false,
 	LayoutOrder = 4,
-	Parent = page5,
+	Parent = secConfig,
 })
 addCorner(delWpBtn2, 6)
 create("UIStroke", { Color = C.border, Thickness = 1, Transparency = 0.4, Parent = delWpBtn2 })
@@ -2784,35 +2957,35 @@ delWpBtn2.MouseButton1Click:Connect(function()
 	task.delay(1.5, function() if delWpBtn2.Parent then delWpBtn2.Text = "Delete All Waypoints" end end)
 end)
 
-createSectionHeader(page5, "Sliders & Fly", 5)
+local secSlidersfly = createSectionHeader(page5, "Sliders & Fly", 5)
 
-createSlider(page5, "Slider Step", 1, 50, State.sliderStep, 6, function(v)
+createSlider(secSlidersfly, "Slider Step", 1, 50, State.sliderStep, 6, function(v)
 	State.sliderStep = v
 	saveSettings()
 end, "sliderStep")
 
-sepFlyToggle = createToggle(page5, "Separate Fly Speed", 7, function(on)
+sepFlyToggle = createToggle(secSlidersfly, "Separate Fly Speed", 7, function(on)
 	State.separateFlySpeed = on
 	if flySpeedWrapper then flySpeedWrapper.Visible = on end
 end)
 
-createSectionHeader(page5, "Appearance", 8)
+local secAppearance = createSectionHeader(page5, "Appearance", 8)
 
-createSlider(page5, "GUI Scale (%)", 50, 150, State.guiScale, 81, function(v)
+createSlider(secAppearance, "GUI Scale (%)", 50, 150, State.guiScale, 81, function(v)
 	State.guiScale = v
 	local s = v / 100
 	window.Size = UDim2.fromOffset(math.floor(WIN_W * s), math.floor(WIN_H * s))
 	saveSettings()
 end, "guiScale")
 
-createSlider(page5, "Window Opacity (%)", 0, 80, State.guiOpacity, 82, function(v)
+createSlider(secAppearance, "Window Opacity (%)", 0, 80, State.guiOpacity, 82, function(v)
 	State.guiOpacity = v
 	_origBGTrans = {}
 	applyWindowOpacity(v / 100)
 	saveSettings()
 end, "guiOpacity")
 
-createSectionHeader(page5, "Keybinds", 10)
+local secKeybinds = createSectionHeader(page5, "Keybinds", 10)
 
 local bindButtons = {}
 
@@ -2823,7 +2996,7 @@ local function createBindRow(labelText, bindName, order)
 		BackgroundColor3 = C.surface,
 		BorderSizePixel = 0,
 		LayoutOrder = order,
-		Parent = page5,
+		Parent = secKeybinds,
 	})
 	addCorner(row, 6)
 	addStroke(row, C.panelStroke, 1, 0.5)
@@ -2887,25 +3060,25 @@ createBindRow("FreeCam",       "freecam",    13)
 createBindRow("Invisible",     "invisible",  14)
 createBindRow("Fly",           "fly",        15)
 
-createSectionHeader(page5, "Info", 20)
+local secInfo = createSectionHeader(page5, "Info", 20)
 
 create("TextLabel", {
 	Text = "Place ID: " .. tostring(currentPlaceId),
 	Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1,
 	TextColor3 = C.textDim, Font = Enum.Font.SourceSans, TextSize = 15,
-	TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 21, Parent = page5,
+	TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 21, Parent = secInfo,
 })
 create("TextLabel", {
 	Text = "Universe ID: " .. tostring(universeId),
 	Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1,
 	TextColor3 = C.textDim, Font = Enum.Font.SourceSans, TextSize = 15,
-	TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 22, Parent = page5,
+	TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 22, Parent = secInfo,
 })
 create("TextLabel", {
 	Text = "Settings auto-save on slider change",
 	Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1,
 	TextColor3 = C.textDim, Font = Enum.Font.SourceSans, TextSize = 14,
-	TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = 23, Parent = page5,
+	TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = 23, Parent = secInfo,
 })
 
 --  Respawn
@@ -3021,6 +3194,7 @@ local function cleanupAll()
 	if freezeConn then freezeConn:Disconnect(); freezeConn = nil end
 	setAnchored(false)
 	State.infJump = false; if ijConn then ijConn:Disconnect(); ijConn = nil end
+	State.autoJump = false; stopAutoJump()
 	State.noclip = false; if ncConn then ncConn:Disconnect(); ncConn = nil end
 	if State.fly then State.fly = false; stopFly() end
 	if State.esp then State.esp = false; disableESP() end
